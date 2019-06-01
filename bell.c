@@ -20,12 +20,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <openssl/sha.h>
+#include <dirent.h>
 
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #define BELL_FILE_EXTENSION ".bell"
+
+#define RED "\e[0;31m"
+#define GREEN "\e[0;32m"
+#define RESET "\e[0m"
+
+#define SET_COLOR(x) printf("%s", x)
 
 static size_t write_uint16(FILE* fp, uint16_t i)
 {
@@ -201,18 +208,120 @@ char * stringMerge(const char *s1, const char *s2) {
 
 char* integer_to_string(int x)
 {
-    char* buffer = malloc(sizeof(char) * sizeof(int) * 4 + 1);
-    if (buffer)
-    {
-         sprintf(buffer, "%d", x);
+  char* buffer = malloc(sizeof(char) * sizeof(int) * 4 + 1);
+  if (buffer)
+  {
+       sprintf(buffer, "%d", x);
+  }
+  return buffer; // caller is expected to invoke free() on this buffer to release memory
+}
+
+char* bell_dir() {
+
+  DIR *d;
+  struct dirent *dir;
+  char *current_dir = ".";
+
+  d = opendir(current_dir);
+  if (d) {
+    char* path = realpath(current_dir, NULL);
+    while (strcmp(path, "/") != 0 ) {
+      while ((dir = readdir(d)) != NULL) {
+        // HEAD will be changed to '.bell'
+        if (strcmp(dir->d_name, ".bell") == 0) {
+          return path;
+        }
+      }
+      //preppend "../" to current_dir
+      char *tmp = malloc(strlen("../") + strlen(current_dir) +1);
+      strcat(tmp, "../");
+      strcat(tmp, current_dir);
+      current_dir = tmp;
+      d = opendir(current_dir);
+      free(path);
+      path = realpath(current_dir, NULL);
+      free(dir);
     }
-    return buffer; // caller is expected to invoke free() on this buffer to release memory
+    return 1;
+    free(current_dir);
+    free(dir);
+    free(d);
+  }
+  return 1;
 }
 
 int main(int argc, char* argv[]) {
 
   struct stat fileStat;
+  // need add commands
+  // if 'status' == give all files within the directory that have been modified
+  // if 'add' == compress that file
+  // if 'goto' == pass in sha and decrypt that file
+
+  // status, we have to store somewhere the current 'root' SHA (timestamp we can get from the file itself)
+  // within a file called HEAD
+  //
+
+  if(!strcmp(argv[2],"status")) {
+    // first look at HEAD and get the timestamp of it
+    // from the root dir, get all folders/files that were updated after this
+    //
+    // THIS SHOULD KEEP GOING UP UNTIL IT FINDS A .bell FILE
+
+    // for now keep, going up until it hits a HEAD file
+    //
+
+
+    char *repo_dir = bell_dir();
+    char *head_file = malloc(strlen(repo_dir) + strlen("/.bell/HEAD") + 1);
+    strcpy(head_file, repo_dir);
+    strcat(head_file, "/.bell/HEAD");
+    stat(head_file,&fileStat);
+    time_t after_timestamp = fileStat.st_mtime;
+
+    //get all files that were modified after this time
+    //
+    // currently only lists directories/files in the current dir, need to run a tree treversal to get all files
+    DIR *d;
+    struct dirent *dir;
+    d = opendir(".");
+    if (d) {
+  
+      SET_COLOR(RED);
+      printf("Files changed:\n");
+      while ((dir = readdir(d)) != NULL) {
+        if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0) {
+          continue;
+        }
+        else if (dir->d_type == DT_DIR || dir->d_type == DT_REG) {
+          struct stat dirStat;
+          stat(dir->d_name,&dirStat);
+
+          // any file that was modified AFTER setting the head
+          if (after_timestamp < dirStat.st_mtime) {
+            printf("\t%s\n", dir->d_name);
+          }
+        }
+      }
+      SET_COLOR(RESET);
+      closedir(d);
+    }
+  } else {
+    printf("fook");
+  }
+
+  return 0;
   stat("README.md",&fileStat);
+
+  /*
+  char head_sha[64];
+  FILE *fp = fopen("HEAD", "r");
+  if (!fp) {
+      perror ("HEAD could not be located.\n");
+      return 1;
+  }
+  fgets (head_sha, 64, fp);
+  */
 
   // should be in it's own function - calculating SHA
   // should be this string + the sha name
