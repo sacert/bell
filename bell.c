@@ -21,6 +21,9 @@
 #include <string.h>
 #include <openssl/sha.h>
 #include <dirent.h>
+#include <stdbool.h>
+#include <limits.h>
+#include <regex.h>
 
 #include <unistd.h>
 #include <sys/stat.h>
@@ -28,11 +31,29 @@
 
 #define BELL_FILE_EXTENSION ".bell"
 
-#define RED "\e[0;31m"
-#define GREEN "\e[0;32m"
+//#define RED   "\e[0;31m"
+//#define GREEN "\e[0;32m"
+#define NRM  "\x1B[0m"
+#define RED  "\x1B[31m"
+#define GRN  "\x1B[32m"
+#define YEL  "\x1B[33m"
+#define BLU  "\x1B[34m"
+#define MAG  "\x1B[35m"
+#define CYN  "\x1B[36m"
+#define WHT  "\x1B[37m"
 #define RESET "\e[0m"
 
 #define SET_COLOR(x) printf("%s", x)
+
+// regex matcher -- a helper
+int match(const char *string, const char *pattern) {
+  regex_t re;
+  if (regcomp(&re, pattern, REG_EXTENDED|REG_NOSUB) != 0) return 0;
+  int status = regexec(&re, string, 0, NULL, 0);
+  regfree(&re);
+  if (status != 0) return 0;
+  return 1;
+}
 
 static size_t write_uint16(FILE* fp, uint16_t i)
 {
@@ -250,6 +271,105 @@ char* bell_dir() {
   return 1;
 }
 
+bool allNewFilesInDir(char *dirname, time_t after_timestamp) {
+  DIR *dir;
+  struct dirent *dirp;
+  dir=opendir(dirname);
+  chdir(dirname);
+  while((dirp=readdir(dir))!=NULL) {
+    if(strcmp(dirp->d_name, ".")==0 || strcmp(dirp->d_name, "..")==0){
+      continue;
+    } else if (dirp->d_type == DT_DIR || dirp->d_type == DT_REG) {
+      struct stat dirStat;
+      stat(dirp->d_name,&dirStat);
+      if (after_timestamp > dirStat.st_mtime) {
+        chdir("..");
+        closedir(dir);
+        return false;
+      }
+    }
+  }
+  chdir("..");
+  closedir(dir);
+  return true;
+}
+
+
+void searchInDirectory(char *dirname, time_t after_timestamp, char* path, char** ignore_types, int ignore_types_count) {
+    DIR *dir;
+    struct dirent *dirp;
+    dir=opendir(dirname);
+    chdir(dirname);
+    while((dirp=readdir(dir))!=NULL) {
+      if(strcmp(dirp->d_name, ".")==0 || strcmp(dirp->d_name, "..")==0){
+              continue;
+      } else if (dirp->d_type == DT_DIR || dirp->d_type == DT_REG) {
+        
+        struct stat dirStat;
+        stat(dirp->d_name,&dirStat);
+
+        char *path_from_root = malloc(strlen(path) + 1 + strlen(dirp->d_name) + 1);
+        strcpy(path_from_root, path);
+        strcat(path_from_root, dirp->d_name);
+        // if a folder, check if it is new and all files within it are new and print it
+        if (dirp->d_type == DT_DIR) {
+
+          strcpy(path_from_root, path);
+          strcat(path_from_root, dirp->d_name);
+          strcat(path_from_root, "/");
+
+          int skip = 0;
+          int i;
+          for (i = 0; i < ignore_types_count; i++) {
+
+            if (match(path_from_root, ignore_types[i])) {
+              skip = 1;
+              continue;
+            }
+          }
+
+          if (skip)
+            continue;
+
+          if (allNewFilesInDir(dirp->d_name, after_timestamp)) {
+            SET_COLOR(BLU);
+            printf("\t%s\n", path_from_root);
+            continue;
+            SET_COLOR(RESET);
+          } else {
+            searchInDirectory(dirp->d_name, after_timestamp, path_from_root, ignore_types, ignore_types_count);
+          }
+        } else {
+          int skip = 0;
+          int i;
+          for (i = 0; i < ignore_types_count; i++) {
+            if (match(dirp->d_name, ignore_types[i])) {
+              skip = 1;
+              continue;
+            }
+          }
+
+          if (skip)
+            continue;
+
+          // if a file, any file that was modified AFTER setting the head
+          if (after_timestamp < dirStat.st_mtime) {
+
+            SET_COLOR(RED);
+            if (strlen(path) == 0) {
+              printf("\t%s\n", dirp->d_name);
+            } else {
+              printf(" \t%s\n", path_from_root);
+            }
+            SET_COLOR(RESET);
+          }
+        }
+      }
+    }
+    chdir("..");
+    closedir(dir);
+}
+
 int main(int argc, char* argv[]) {
 
   struct stat fileStat;
@@ -261,51 +381,51 @@ int main(int argc, char* argv[]) {
   // status, we have to store somewhere the current 'root' SHA (timestamp we can get from the file itself)
   // within a file called HEAD
   //
+  //
 
   if(!strcmp(argv[2],"status")) {
-    // first look at HEAD and get the timestamp of it
-    // from the root dir, get all folders/files that were updated after this
-    //
-    // THIS SHOULD KEEP GOING UP UNTIL IT FINDS A .bell FILE
 
-    // for now keep, going up until it hits a HEAD file
-    //
-
-
+    // locate the .bell directory
     char *repo_dir = bell_dir();
     char *head_file = malloc(strlen(repo_dir) + strlen("/.bell/HEAD") + 1);
     strcpy(head_file, repo_dir);
     strcat(head_file, "/.bell/HEAD");
     stat(head_file,&fileStat);
-    time_t after_timestamp = fileStat.st_mtime;
 
     //get all files that were modified after this time
-    //
-    // currently only lists directories/files in the current dir, need to run a tree treversal to get all files
-    DIR *d;
-    struct dirent *dir;
-    d = opendir(".");
-    if (d) {
-  
-      SET_COLOR(RED);
-      printf("Files changed:\n");
-      while ((dir = readdir(d)) != NULL) {
-        if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0) {
-          continue;
-        }
-        else if (dir->d_type == DT_DIR || dir->d_type == DT_REG) {
-          struct stat dirStat;
-          stat(dir->d_name,&dirStat);
+    time_t after_timestamp = fileStat.st_mtime;
 
-          // any file that was modified AFTER setting the head
-          if (after_timestamp < dirStat.st_mtime) {
-            printf("\t%s\n", dir->d_name);
-          }
-        }
-      }
-      SET_COLOR(RESET);
-      closedir(d);
+
+    char *ignore_file = malloc(strlen(repo_dir) + strlen("/.bellignore") + 1);
+    strcpy(ignore_file, repo_dir);
+    strcat(ignore_file, "/.bellignore");
+    FILE* file = fopen(ignore_file, "r");
+    char line[256];
+
+    int line_counter = 0;
+    while (fgets(line, sizeof(line), file)) {
+      line_counter += 1;
     }
+
+    char *ignore_file_regex[line_counter];
+
+    line_counter = 0;
+    rewind(file);
+    while (fgets(line, sizeof(line), file)) {
+
+      // dont include newline character
+      size_t ln = strlen(line)-1;
+      if (line[ln] == '\n')
+        line[ln] = '\0';
+
+      ignore_file_regex[line_counter] = strdup (line);
+      line_counter+=1;
+    }
+    fclose(file);
+
+
+    printf("Files changed:\n");
+    searchInDirectory(".", after_timestamp, "", ignore_file_regex, line_counter);
   } else {
     printf("fook");
   }
